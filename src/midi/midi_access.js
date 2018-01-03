@@ -8,7 +8,7 @@
     is in line with the behavior of the native MIDIAccess object.
 
 */
-
+import Jzz from 'jzz';
 import MIDIInput from './midi_input';
 import MIDIOutput from './midi_output';
 import MIDIConnectionEvent from './midiconnection_event';
@@ -63,28 +63,30 @@ export function createMIDIAccess() {
             return;
         }
 
-        createJazzInstance((instance) => {
-            if (typeof instance === 'undefined' || instance === null) {
+        jazzInstance = Jzz()
+            .or(() => {
                 reject({ message: 'No access to MIDI devices: your browser does not support the WebMIDI API and the Jazz plugin is not installed.' });
-                return;
-            }
-
-            jazzInstance = instance;
-
-            createMIDIPorts(() => {
-                setupListeners();
+            })
+            .and(() => {
+                jazzInstance.info().inputs.forEach(info => {
+                    let port = new MIDIInput(info);
+                    midiInputs.set(port.id, port);
+                })
+                jazzInstance.info().outputs.forEach(info => {
+                    let port = new MIDIOutput(info);
+                    midiOutputs.set(port.id, port);
+                });
                 midiAccess = new MIDIAccess(midiInputs, midiOutputs);
                 resolve(midiAccess);
-            });
-        });
+            })
     }));
 }
 
 
 // create MIDIInput and MIDIOutput instances for all initially connected MIDI devices
 function createMIDIPorts(callback) {
-    const inputs = jazzInstance.MidiInList();
-    const outputs = jazzInstance.MidiOutList();
+    const inputs = jazzInstance.info().inputs;
+    const outputs = jazzInstance.info().outputs;
     const numInputs = inputs.length;
     const numOutputs = outputs.length;
 

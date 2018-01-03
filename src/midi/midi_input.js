@@ -12,11 +12,11 @@ let midiProc;
 const nodejs = getDevice().nodejs;
 
 export default class MIDIInput {
-    constructor(info, instance) {
-        this.id = getMIDIDeviceId(info[0], 'input');
-        this.name = info[0];
-        this.manufacturer = info[1];
-        this.version = info[2];
+    constructor(info) {
+        this.id = getMIDIDeviceId(info.name, 'output');
+        this.name = info.name;
+        this.manufacturer = info.manufacturer;
+        this.version = info.version;
         this.type = 'input';
         this.state = 'connected';
         this.connection = 'pending';
@@ -38,14 +38,15 @@ export default class MIDIInput {
         this._inLongSysexMessage = false;
         this._sysexBuffer = new Uint8Array();
 
-        this._jazzInstance = instance;
-        this._jazzInstance.inputInUse = true;
-
-        // on Linux opening and closing Jazz instances causes the plugin to crash a lot so we open
-        // the device here and don't close it when close() is called, see below
-        if (getDevice().platform === 'linux') {
-            this._jazzInstance.MidiInOpen(this.name, midiProc.bind(this));
-        }
+        // this._jazzInstance = instance;
+        // this._jazzInstance.inputInUse = true;
+        /*
+                // on Linux opening and closing Jazz instances causes the plugin to crash a lot so we open
+                // the device here and don't close it when close() is called, see below
+                if (getDevice().platform === 'linux') {
+                    this._jazzInstance.MidiInOpen(this.name, midiProc.bind(this));
+                }
+        */
     }
 
     addEventListener(type, listener) {
@@ -91,9 +92,9 @@ export default class MIDIInput {
         if (this.connection === 'open') {
             return;
         }
-        if (getDevice().platform !== 'linux') {
-            this._jazzInstance.MidiInOpen(this.name, midiProc.bind(this));
-        }
+        // if (getDevice().platform !== 'linux') {
+        //     this._jazzInstance.MidiInOpen(this.name, midiProc.bind(this));
+        // }
         this.connection = 'open';
         dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
     }

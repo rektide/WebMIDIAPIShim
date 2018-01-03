@@ -6,11 +6,11 @@ import Store from '../util/store';
 import { dispatchEvent, getMIDIDeviceId } from './midi_access';
 
 export default class MIDIOutput {
-    constructor(info, instance) {
-        this.id = getMIDIDeviceId(info[0], 'output');
-        this.name = info[0];
-        this.manufacturer = info[1];
-        this.version = info[2];
+    constructor(info) {
+        this.id = getMIDIDeviceId(info.name, 'input');
+        this.name = info.name;
+        this.manufacturer = info.manufacturer;
+        this.version = info.version;
         this.type = 'output';
         this.state = 'connected';
         this.connection = 'pending';
@@ -20,12 +20,6 @@ export default class MIDIOutput {
         this._listeners = new Store();
         this._inLongSysexMessage = false;
         this._sysexBuffer = new Uint8Array();
-
-        this._jazzInstance = instance;
-        this._jazzInstance.outputInUse = true;
-        if (getDevice().platform === 'linux') {
-            this._jazzInstance.MidiOutOpen(this.name);
-        }
     }
 
     open() {

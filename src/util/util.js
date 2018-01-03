@@ -110,6 +110,7 @@ const polyfillPerformance = () => {
 }
 
 // generates UUID for MIDI devices
+let i = 0;
 export function generateUUID() {
     let d = new Date().getTime();
     let uuid = new Array(64).join('x');// 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
