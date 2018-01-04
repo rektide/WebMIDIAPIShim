@@ -1,13 +1,14 @@
 /*
   MIDIOutput is a wrapper around an output of a Jazz instance
 */
-import { getDevice } from '../util/util';
+import Jzz from 'jzz';
+import { generateUUID } from '../util/util';
 import Store from '../util/store';
-import { dispatchEvent, getMIDIDeviceId } from './midi_access';
+import { dispatchEvent } from './midi_access';
 
 export default class MIDIOutput {
     constructor(info) {
-        this.id = getMIDIDeviceId(info.name, 'input');
+        this.id = info.id || generateUUID();
         this.name = info.name;
         this.manufacturer = info.manufacturer;
         this.version = info.version;
@@ -16,54 +17,47 @@ export default class MIDIOutput {
         this.connection = 'pending';
         this.onmidimessage = null;
         this.onstatechange = null;
+        this.port = null;
 
         this._listeners = new Store();
-        this._inLongSysexMessage = false;
-        this._sysexBuffer = new Uint8Array();
     }
 
     open() {
         if (this.connection === 'open') {
             return;
         }
-        if (getDevice().platform !== 'linux') {
-            this._jazzInstance.MidiOutOpen(this.name);
-        }
-        this.connection = 'open';
-        dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
+        this.port = Jzz().openMidiOut(this.name)
+            .or(`Could not open input ${this.name}`)
+            .and(() => {
+                this.connection = 'open';
+                dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
+            });
     }
 
     close() {
         if (this.connection === 'closed') {
             return;
         }
-        if (getDevice().platform !== 'linux') {
-            this._jazzInstance.MidiOutClose();
-        }
-        this.connection = 'closed';
-        dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
-        this.onstatechange = null;
-        this._listeners.clear();
+        this.port.close()
+            .or(`Could not close output ${this.name}`)
+            .and(() => {
+                dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
+                this.connection = 'closed';
+                this.onstatechange = null;
+                this._listeners.clear();
+            })
     }
 
-    send(data, timestamp) {
+    send(data, timestamp = 0) {
         let delayBeforeSend = 0;
-
-        if (data.length === 0) {
-            return false;
-        }
-
-        if (timestamp) {
+        if (timestamp !== 0) {
             delayBeforeSend = Math.floor(timestamp - performance.now());
         }
 
-        if (timestamp && (delayBeforeSend > 1)) {
-            setTimeout(() => {
-                this._jazzInstance.MidiOutLong(data);
-            }, delayBeforeSend);
-        } else {
-            this._jazzInstance.MidiOutLong(data);
-        }
+        this.port
+            .wait(delayBeforeSend)
+            .send(data);
+
         return true;
     }
 

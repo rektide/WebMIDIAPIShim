@@ -64,9 +64,9 @@ window.onload = function () {
         );
     }
 
-    // browsers without WebMIDI API or Jazz plugin
+    // browsers without WebMIDI API or Jazz extension or plugin
     else {
-        divInputs.innerHTML = 'No access to MIDI devices: browser does not support WebMIDI API, please use the WebMIDIAPIShim together with the Jazz plugin';
+        divInputs.innerHTML = 'No access to MIDI devices: browser does not support WebMIDI API, please use the WebMIDIAPIShim together with the Jazz extension (or the Jazz plugin)';
         divOutputs.innerHTML = '';
     }
 
