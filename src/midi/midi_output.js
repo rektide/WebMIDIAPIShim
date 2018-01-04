@@ -27,7 +27,7 @@ export default class MIDIOutput {
             return;
         }
         this.port = Jzz().openMidiOut(this.name)
-            .or(`Could not open input ${this.name}`)
+            .or(`Could not open output ${this.name}`)
             .and(() => {
                 this.connection = 'open';
                 dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
