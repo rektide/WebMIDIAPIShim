@@ -74,8 +74,7 @@ export function createMIDIAccess() {
             reject({ message: 'WebMIDIAPIShim supports Internet Explorer 10 and above.' });
             return;
         }
-
-        Jzz()
+        Jzz({ engine: ['plugin', 'extension', 'webmidi'] })
             .or(() => {
                 reject({ message: 'No access to MIDI devices: your browser does not support the WebMIDI API and the Jazz extension (or Jazz plugin) is not installed.' });
             })
