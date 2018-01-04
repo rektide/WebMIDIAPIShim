@@ -1,7 +1,7 @@
 /*
   MIDIInput is a wrapper around an input of a Jazz instance
 */
-import Jzz from 'jzz';
+import Jzz from '../util/jzz';
 import MIDIMessageEvent from './midimessage_event';
 import MIDIConnectionEvent from './midiconnection_event';
 import { dispatchEvent } from './midi_access';
@@ -103,12 +103,12 @@ export default class MIDIInput {
             .or(`Could not close input ${this.name}`)
             .and(() => {
                 this.connection = 'closed';
+                dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
                 this.port = null;
                 this._onmidimessage = null;
                 this.onstatechange = null;
                 this._listeners.get('midimessage').clear();
                 this._listeners.get('statechange').clear();
-                dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
             });
     }
 }

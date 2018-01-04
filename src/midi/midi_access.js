@@ -8,7 +8,7 @@
     is in line with the behavior of the native MIDIAccess object.
 
 */
-import Jzz from 'jzz';
+import Jzz from '../util/jzz';
 import MIDIInput from './midi_input';
 import MIDIOutput from './midi_output';
 import MIDIConnectionEvent from './midiconnection_event';
@@ -53,12 +53,10 @@ export function getMIDIPorts() {
     Jzz().info().inputs.forEach(info => {
         let port = new MIDIInput(info);
         midiInputs.set(port.id, port);
-        // midiInputIds.set(port.name, port.id);
     });
     Jzz().info().outputs.forEach(info => {
         let port = new MIDIOutput(info);
         midiOutputs.set(port.id, port);
-        // midiOutputIds.set(port.name, port.id);
     });
 }
 
@@ -74,7 +72,7 @@ export function createMIDIAccess() {
             reject({ message: 'WebMIDIAPIShim supports Internet Explorer 10 and above.' });
             return;
         }
-        Jzz({ engine: ['plugin', 'extension', 'webmidi'] })
+        Jzz()
             .or(() => {
                 reject({ message: 'No access to MIDI devices: your browser does not support the WebMIDI API and the Jazz extension (or Jazz plugin) is not installed.' });
             })
@@ -101,12 +99,4 @@ export function dispatchEvent(port) {
         midiAccess.onstatechange(evt);
     }
     listeners.forEach(listener => listener(evt));
-}
-
-
-export function closeAllMIDIInputs() {
-    midiInputs.forEach((input) => {
-        // input.close();
-        input._jazzInstance.MidiInClose();
-    });
 }

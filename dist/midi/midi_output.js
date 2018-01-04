@@ -9,6 +9,10 @@ var _createClass = function () { function defineProperties(target, props) { for 
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      */
 
 
+var _jzz = require('../util/jzz');
+
+var _jzz2 = _interopRequireDefault(_jzz);
+
 var _util = require('../util/util');
 
 var _store = require('../util/store');
@@ -22,78 +26,63 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 var MIDIOutput = function () {
-    function MIDIOutput(info, instance) {
+    function MIDIOutput(info) {
         _classCallCheck(this, MIDIOutput);
 
-        this.id = (0, _midi_access.getMIDIDeviceId)(info[0], 'output');
-        this.name = info[0];
-        this.manufacturer = info[1];
-        this.version = info[2];
+        this.id = info.id || (0, _util.generateUUID)();
+        this.name = info.name;
+        this.manufacturer = info.manufacturer;
+        this.version = info.version;
         this.type = 'output';
         this.state = 'connected';
         this.connection = 'pending';
         this.onmidimessage = null;
         this.onstatechange = null;
+        this.port = null;
 
         this._listeners = new _store2.default();
-        this._inLongSysexMessage = false;
-        this._sysexBuffer = new Uint8Array();
-
-        this._jazzInstance = instance;
-        this._jazzInstance.outputInUse = true;
-        if ((0, _util.getDevice)().platform === 'linux') {
-            this._jazzInstance.MidiOutOpen(this.name);
-        }
     }
 
     _createClass(MIDIOutput, [{
         key: 'open',
         value: function open() {
+            var _this = this;
+
             if (this.connection === 'open') {
                 return;
             }
-            if ((0, _util.getDevice)().platform !== 'linux') {
-                this._jazzInstance.MidiOutOpen(this.name);
-            }
-            this.connection = 'open';
-            (0, _midi_access.dispatchEvent)(this); // dispatch MIDIConnectionEvent via MIDIAccess
+            this.port = (0, _jzz2.default)().openMidiOut(this.name).or('Could not open input ' + this.name).and(function () {
+                _this.connection = 'open';
+                (0, _midi_access.dispatchEvent)(_this); // dispatch MIDIConnectionEvent via MIDIAccess
+            });
         }
     }, {
         key: 'close',
         value: function close() {
+            var _this2 = this;
+
             if (this.connection === 'closed') {
                 return;
             }
-            if ((0, _util.getDevice)().platform !== 'linux') {
-                this._jazzInstance.MidiOutClose();
-            }
-            this.connection = 'closed';
-            (0, _midi_access.dispatchEvent)(this); // dispatch MIDIConnectionEvent via MIDIAccess
-            this.onstatechange = null;
-            this._listeners.clear();
+            this.port.close().or('Could not close output ' + this.name).and(function () {
+                _this2.connection = 'closed';
+                (0, _midi_access.dispatchEvent)(_this2); // dispatch MIDIConnectionEvent via MIDIAccess
+                _this2.onstatechange = null;
+                _this2._listeners.clear();
+            });
         }
     }, {
         key: 'send',
-        value: function send(data, timestamp) {
-            var _this = this;
+        value: function send(data) {
+            var timestamp = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 0;
 
             var delayBeforeSend = 0;
-
-            if (data.length === 0) {
-                return false;
-            }
-
-            if (timestamp) {
+            if (timestamp !== 0) {
                 delayBeforeSend = Math.floor(timestamp - performance.now());
             }
 
-            if (timestamp && delayBeforeSend > 1) {
-                setTimeout(function () {
-                    _this._jazzInstance.MidiOutLong(data);
-                }, delayBeforeSend);
-            } else {
-                this._jazzInstance.MidiOutLong(data);
-            }
+            this.port.wait(delayBeforeSend).send(data);
+
             return true;
         }
     }, {

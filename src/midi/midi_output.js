@@ -1,7 +1,7 @@
 /*
   MIDIOutput is a wrapper around an output of a Jazz instance
 */
-import Jzz from 'jzz';
+import Jzz from '../util/jzz';
 import { generateUUID } from '../util/util';
 import Store from '../util/store';
 import { dispatchEvent } from './midi_access';
@@ -41,8 +41,8 @@ export default class MIDIOutput {
         this.port.close()
             .or(`Could not close output ${this.name}`)
             .and(() => {
-                dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
                 this.connection = 'closed';
+                dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
                 this.onstatechange = null;
                 this._listeners.clear();
             })
