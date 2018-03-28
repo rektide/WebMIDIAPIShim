@@ -33,6 +33,8 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
+var nodejs = (0, _util.getDevice)().nodejs;
+
 var MIDIInput = function () {
     function MIDIInput(info) {
         _classCallCheck(this, MIDIInput);
@@ -45,6 +47,9 @@ var MIDIInput = function () {
         this.state = 'connected';
         this.connection = 'pending';
         this.port = null;
+        this._inLongSysexMessage = false;
+        this._sysexBuffer = new Uint8Array();
+        this._midiProc = midiProc.bind(this);
 
         this.onstatechange = null;
         this._onmidimessage = null;
@@ -57,12 +62,13 @@ var MIDIInput = function () {
 
                 this._onmidimessage = value;
                 if (typeof value === 'function') {
-                    if (this.port === null) {
-                        this.open();
-                    }
-                    this.port.connect(function (msg) {
-                        var m = new _midimessage_event2.default(_this, msg);
-                        value(m);
+                    // if (this.port === null) {
+                    //     this.open();
+                    // }
+                    (0, _jzz2.default)().midiInOpen(this.name).connect(function (msg) {
+                        _this._midiProc(0, msg);
+                        // const m = new MIDIMessageEvent(this, msg);
+                        // value(m);
                     });
                 }
             }
@@ -121,9 +127,13 @@ var MIDIInput = function () {
             if (this.connection === 'open') {
                 return;
             }
-            this.port = (0, _jzz2.default)().openMidiIn(this.name).or('Could not open input ' + this.name).and(function () {
+            this.port = (0, _jzz2.default)().openMidiIn(this.name)
+            // .or(`Could not open input ${this.name}`)
+            .and(function () {
                 _this2.connection = 'open';
                 (0, _midi_access.dispatchEvent)(_this2); // dispatch MIDIConnectionEvent via MIDIAccess
+            }).err(function (err) {
+                console.log(err);
             });
         }
     }, {
@@ -144,10 +154,136 @@ var MIDIInput = function () {
                 _this3._listeners.get('statechange').clear();
             });
         }
+    }, {
+        key: '_appendToSysexBuffer',
+        value: function _appendToSysexBuffer(data) {
+            var oldLength = this._sysexBuffer.length;
+            var tmpBuffer = new Uint8Array(oldLength + data.length);
+            tmpBuffer.set(this._sysexBuffer);
+            tmpBuffer.set(data, oldLength);
+            this._sysexBuffer = tmpBuffer;
+        }
+    }, {
+        key: '_bufferLongSysex',
+        value: function _bufferLongSysex(data, initialOffset) {
+            var j = initialOffset;
+            while (j < data.length) {
+                if (data[j] == 0xF7) {
+                    // end of sysex!
+                    j += 1;
+                    this._appendToSysexBuffer(data.slice(initialOffset, j));
+                    return j;
+                }
+                j += 1;
+            }
+            // didn't reach the end; just tack it on.
+            this._appendToSysexBuffer(data.slice(initialOffset, j));
+            this._inLongSysexMessage = true;
+            return j;
+        }
     }]);
 
     return MIDIInput;
 }();
 
 exports.default = MIDIInput;
+
+
+function midiProc(timestamp, data) {
+    var length = 0;
+    var i = void 0;
+    var isSysexMessage = false;
+
+    console.log(timestamp, data);
+
+    // Jazz sometimes passes us multiple messages at once, so we need to parse them out and pass them one at a time.
+
+    for (i = 0; i < data.length; i += length) {
+        var isValidMessage = true;
+        if (this._inLongSysexMessage) {
+            i = this._bufferLongSysex(data, i);
+            if (data[i - 1] != 0xf7) {
+                // ran off the end without hitting the end of the sysex message
+                return;
+            }
+            isSysexMessage = true;
+        } else {
+            isSysexMessage = false;
+            switch (data[i] & 0xF0) {
+                case 0x00:
+                    // Chew up spurious 0x00 bytes.  Fixes a Windows problem.
+                    length = 1;
+                    isValidMessage = false;
+                    break;
+
+                case 0x80: // note off
+                case 0x90: // note on
+                case 0xA0: // polyphonic aftertouch
+                case 0xB0: // control change
+                case 0xE0:
+                    // channel mode
+                    length = 3;
+                    break;
+
+                case 0xC0: // program change
+                case 0xD0:
+                    // channel aftertouch
+                    length = 2;
+                    break;
+
+                case 0xF0:
+                    switch (data[i]) {
+                        case 0xf0:
+                            // letiable-length sysex.
+                            i = this._bufferLongSysex(data, i);
+                            if (data[i - 1] != 0xf7) {
+                                // ran off the end without hitting the end of the sysex message
+                                return;
+                            }
+                            isSysexMessage = true;
+                            break;
+
+                        case 0xF1: // MTC quarter frame
+                        case 0xF3:
+                            // song select
+                            length = 2;
+                            break;
+
+                        case 0xF2:
+                            // song position pointer
+                            length = 3;
+                            break;
+
+                        default:
+                            length = 1;
+                            break;
+                    }
+                    break;
+            }
+        }
+        if (!isValidMessage) {
+            continue;
+        }
+
+        var evt = {};
+        // evt.receivedTime = parseFloat(timestamp.toString()) + this._jazzInstance._perfTimeZero;
+
+        if (isSysexMessage || this._inLongSysexMessage) {
+            evt.data = new Uint8Array(this._sysexBuffer);
+            this._sysexBuffer = new Uint8Array(0);
+            this._inLongSysexMessage = false;
+        } else {
+            evt.data = new Uint8Array(data.slice(i, length + i));
+        }
+
+        if (nodejs) {
+            if (this._onmidimessage) {
+                this._onmidimessage(evt);
+            }
+        } else {
+            var e = new _midimessage_event2.default(this, evt.data, evt.receivedTime);
+            this.dispatchEvent(e);
+        }
+    }
+}
 //# sourceMappingURL=midi_input.js.map

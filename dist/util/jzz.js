@@ -1,41 +1,5 @@
 'use strict';
 
-/*
-    This is an adapted and abbreviated version of JZZ by Sema: https://github.com/jazz-soft/JZZ
-*/
-
-function MIDI(arg) {
-    var self = this instanceof MIDI ? this : self = new MIDI();
-    self._from = arg instanceof MIDI ? arg._from.slice() : [];
-    if (!arguments.length) return self;
-    var arr = arg instanceof Array ? arg : arguments;
-    for (var i = 0; i < arr.length; i++) {
-        var n = arr[i];
-        self.push(n);
-    }
-    return self;
-}
-
-MIDI.prototype = [];
-MIDI.prototype.constructor = MIDI;
-MIDI.prototype._stamp = function (obj) {
-    this._from.push(obj._orig ? obj._orig : obj);return this;
-};
-MIDI.prototype._unstamp = function (obj) {
-    if (typeof obj == 'undefined') this._from = [];else {
-        if (obj._orig) obj = obj._orig;
-        var i = this._from.indexOf(obj);
-        if (i > -1) this._from.splice(i, 1);
-    }
-    return this;
-};
-MIDI.prototype._stamped = function (obj) {
-    if (obj._orig) obj = obj._orig;
-    for (var i = 0; i < this._from.length; i++) {
-        if (this._from[i] == obj) return true;
-    }return false;
-};
-
 function createJzz() {
     var _version = '0.4.1';
 
@@ -432,6 +396,41 @@ function createJzz() {
         }
         this._break();
     }
+    // Web MIDI API
+    function _tryWebMIDI() {
+        if (navigator.requestMIDIAccess) {
+            var self = this;
+            function onGood(midi) {
+                _initWebMIDI(midi);
+                self._resume();
+            }
+            function onBad(msg) {
+                self._crash(msg);
+            }
+            var opt = {};
+            navigator.requestMIDIAccess(opt).then(onGood, onBad);
+            this._pause();
+            return;
+        }
+        this._break();
+    }
+    function _tryWebMIDIsysex() {
+        if (navigator.requestMIDIAccess) {
+            var self = this;
+            function onGood(midi) {
+                _initWebMIDI(midi, true);
+                self._resume();
+            }
+            function onBad(msg) {
+                self._crash(msg);
+            }
+            var opt = { sysex: true };
+            navigator.requestMIDIAccess(opt).then(onGood, onBad);
+            this._pause();
+            return;
+        }
+        this._break();
+    }
     // Web-extension
     function _tryCRX() {
         var self = this;
@@ -459,7 +458,7 @@ function createJzz() {
         try {
             document.dispatchEvent(new Event('jazz-midi'));
         } catch (e) {}
-        window.setTimeout(function () {
+        setTimeout(function () {
             if (!inst) self._crash();
         }, 0);
     }
@@ -476,14 +475,17 @@ function createJzz() {
         var ret = [_tryNODE, _zeroBreak];
         var arr = _filterEngineNames(opt);
         for (var i = 0; i < arr.length; i++) {
-            if (arr[i] == 'extension') ret.push(_tryCRX);else if (arr[i] == 'plugin') ret.push(_tryJazzPlugin);
+            if (arr[i] == 'webmidi') {
+                if (opt && opt.sysex === true) ret.push(_tryWebMIDIsysex);
+                if (!opt || opt.sysex !== true || opt.degrade === true) ret.push(_tryWebMIDI);
+            } else if (arr[i] == 'extension') ret.push(_tryCRX);else if (arr[i] == 'plugin') ret.push(_tryJazzPlugin);
         }
         ret.push(_initNONE);
         return ret;
     }
 
     function _filterEngineNames(opt) {
-        var web = ['plugin', 'extension'];
+        var web = ['extension', 'webmidi', 'plugin'];
         if (!opt || !opt.engine) return web;
         var arr = opt.engine instanceof Array ? opt.engine : [opt.engine];
         var dup = {};
@@ -688,7 +690,129 @@ function createJzz() {
         };
         _initEngineJP();
     }
-
+    function _initWebMIDI(access, sysex) {
+        _engine._type = 'webmidi';
+        _engine._version = 43;
+        _engine._sysex = !!sysex;
+        _engine._access = access;
+        _engine._inMap = {};
+        _engine._outMap = {};
+        _engine._refresh = function () {
+            _engine._outs = [];
+            _engine._ins = [];
+            _engine._access.outputs.forEach(function (port, key) {
+                _engine._outs.push({ type: _engine._type, name: port.name, manufacturer: port.manufacturer, version: port.version });
+            });
+            _engine._access.inputs.forEach(function (port, key) {
+                _engine._ins.push({ type: _engine._type, name: port.name, manufacturer: port.manufacturer, version: port.version });
+            });
+        };
+        _engine._openOut = function (port, name) {
+            var impl = _engine._outMap[name];
+            if (!impl) {
+                impl = {
+                    name: name,
+                    clients: [],
+                    info: {
+                        name: name,
+                        manufacturer: _engine._allOuts[name].manufacturer,
+                        version: _engine._allOuts[name].version,
+                        type: 'MIDI-out',
+                        sysex: _engine._sysex,
+                        engine: _engine._type
+                    },
+                    _close: function _close(port) {
+                        _engine._closeOut(port);
+                    },
+                    _receive: function _receive(a) {
+                        this.dev.send(a.slice());
+                    }
+                };
+                var id, dev;
+                _engine._access.outputs.forEach(function (dev, key) {
+                    if (dev.name === name) impl.dev = dev;
+                });
+                if (impl.dev) {
+                    _engine._outMap[name] = impl;
+                } else impl = undefined;
+            }
+            if (impl) {
+                if (impl.dev.open) impl.dev.open();
+                port._orig._impl = impl;
+                _push(impl.clients, port._orig);
+                port._info = impl.info;
+                port._receive = function (arg) {
+                    impl._receive(arg);
+                };
+                port._close = function () {
+                    impl._close(this);
+                };
+            } else port._break();
+        };
+        _engine._openIn = function (port, name) {
+            var impl = _engine._inMap[name];
+            if (!impl) {
+                impl = {
+                    name: name,
+                    clients: [],
+                    info: {
+                        name: name,
+                        manufacturer: _engine._allIns[name].manufacturer,
+                        version: _engine._allIns[name].version,
+                        type: 'MIDI-in',
+                        sysex: _engine._sysex,
+                        engine: _engine._type
+                    },
+                    _close: function _close(port) {
+                        _engine._closeIn(port);
+                    },
+                    handle: function handle(evt) {
+                        for (var i = 0; i < this.clients.length; i++) {
+                            var msg = MIDI([].slice.call(evt.data));
+                            this.clients[i]._emit(msg);
+                        }
+                    }
+                };
+                var id, dev;
+                _engine._access.inputs.forEach(function (dev, key) {
+                    if (dev.name === name) impl.dev = dev;
+                });
+                if (impl.dev) {
+                    function makeHandle(x) {
+                        return function (evt) {
+                            x.handle(evt);
+                        };
+                    }
+                    impl.dev.onmidimessage = makeHandle(impl);
+                    _engine._inMap[name] = impl;
+                } else impl = undefined;
+            }
+            if (impl) {
+                if (impl.dev.open) impl.dev.open();
+                port._orig._impl = impl;
+                _push(impl.clients, port._orig);
+                port._info = impl.info;
+                port._close = function () {
+                    impl._close(this);
+                };
+            } else port._break();
+        };
+        _engine._closeOut = function (port) {
+            var impl = port._impl;
+            if (!impl.clients.length) {
+                if (impl.dev.close) impl.dev.close();
+            }
+            _pop(impl.clients, port._orig);
+        };
+        _engine._closeIn = function (port) {
+            var impl = port._impl;
+            _pop(impl.clients, port._orig);
+            if (!impl.clients.length) {
+                if (impl.dev.close) impl.dev.close();
+            }
+        };
+        _engine._close = function () {};
+    }
     function _initCRX(msg, ver) {
         _engine._type = 'extension';
         _engine._version = ver;
@@ -883,6 +1007,702 @@ function createJzz() {
     };
     JZZ.info = function () {
         return _J.prototype.info();
+    };
+    JZZ.createNew = function (arg) {
+        var obj = new _M();
+        if (arg instanceof Object) for (var k in arg) {
+            if (arg.hasOwnProperty(k)) obj[k] = arg[k];
+        }obj._resume();
+        return obj;
+    };
+    _J.prototype.createNew = JZZ.createNew;
+
+    // JZZ.SMPTE
+
+    function SMPTE() {
+        var self = this instanceof SMPTE ? this : self = new SMPTE();
+        SMPTE.prototype.reset.apply(self, arguments);
+        return self;
+    }
+    SMPTE.prototype.reset = function (arg) {
+        if (arg instanceof SMPTE) {
+            this.setType(arg.getType());
+            this.setHour(arg.getHour());
+            this.setMinute(arg.getMinute());
+            this.setSecond(arg.getSecond());
+            this.setFrame(arg.getFrame());
+            this.setQuarter(arg.getQuarter());
+            return this;
+        }
+        var arr = arg instanceof Array ? arg : arguments;
+        this.setType(arr[0]);
+        this.setHour(arr[1]);
+        this.setMinute(arr[2]);
+        this.setSecond(arr[3]);
+        this.setFrame(arr[4]);
+        this.setQuarter(arr[5]);
+        return this;
+    };
+    function _fixDropFrame() {
+        if (this.type == 29.97 && !this.second && this.frame < 2 && this.minute % 10) this.frame = 2;
+    }
+    SMPTE.prototype.isFullFrame = function () {
+        return this.quarter == 0 || this.quarter == 4;
+    };
+    SMPTE.prototype.getType = function () {
+        return this.type;
+    };
+    SMPTE.prototype.getHour = function () {
+        return this.hour;
+    };
+    SMPTE.prototype.getMinute = function () {
+        return this.minute;
+    };
+    SMPTE.prototype.getSecond = function () {
+        return this.second;
+    };
+    SMPTE.prototype.getFrame = function () {
+        return this.frame;
+    };
+    SMPTE.prototype.getQuarter = function () {
+        return this.quarter;
+    };
+    SMPTE.prototype.setType = function (x) {
+        if (typeof x == 'undefined' || x == 24) this.type = 24;else if (x == 25) this.type = 25;else if (x == 29.97) {
+            this.type = 29.97;_fixDropFrame.apply(this);
+        } else if (x == 30) this.type = 30;else throw RangeError('Bad SMPTE frame rate: ' + x);
+        if (this.frame >= this.type) this.frame = this.type == 29.97 ? 29 : this.type - 1;
+        return this;
+    };
+    SMPTE.prototype.setHour = function (x) {
+        if (typeof x == 'undefined') x = 0;
+        if (x != parseInt(x) || x < 0 || x >= 24) throw RangeError('Bad SMPTE hours value: ' + x);
+        this.hour = x;
+        return this;
+    };
+    SMPTE.prototype.setMinute = function (x) {
+        if (typeof x == 'undefined') x = 0;
+        if (x != parseInt(x) || x < 0 || x >= 60) throw RangeError('Bad SMPTE minutes value: ' + x);
+        this.minute = x;
+        _fixDropFrame.apply(this);
+        return this;
+    };
+    SMPTE.prototype.setSecond = function (x) {
+        if (typeof x == 'undefined') x = 0;
+        if (x != parseInt(x) || x < 0 || x >= 60) throw RangeError('Bad SMPTE seconds value: ' + x);
+        this.second = x;
+        _fixDropFrame.apply(this);
+        return this;
+    };
+    SMPTE.prototype.setFrame = function (x) {
+        if (typeof x == 'undefined') x = 0;
+        if (x != parseInt(x) || x < 0 || x >= this.type) throw RangeError('Bad SMPTE frame number: ' + x);
+        this.frame = x;
+        _fixDropFrame.apply(this);
+        return this;
+    };
+    SMPTE.prototype.setQuarter = function (x) {
+        if (typeof x == 'undefined') x = 0;
+        if (x != parseInt(x) || x < 0 || x >= 8) throw RangeError('Bad SMPTE quarter frame: ' + x);
+        this.quarter = x;
+        return this;
+    };
+    SMPTE.prototype.incrFrame = function () {
+        this.frame++;
+        if (this.frame >= this.type) {
+            this.frame = 0;
+            this.second++;
+            if (this.second >= 60) {
+                this.second = 0;
+                this.minute++;
+                if (this.minute >= 60) {
+                    this.minute = 0;
+                    this.hour = this.hour >= 23 ? 0 : this.hour + 1;
+                }
+            }
+        }
+        _fixDropFrame.apply(this);
+        return this;
+    };
+    SMPTE.prototype.decrFrame = function () {
+        if (!this.second && this.frame == 2 && this.type == 29.97 && this.minute % 10) this.frame = 0; // drop-frame
+        this.frame--;
+        if (this.frame < 0) {
+            this.frame = this.type == 29.97 ? 29 : this.type - 1;
+            this.second--;
+            if (this.second < 0) {
+                this.second = 59;
+                this.minute--;
+                if (this.minute < 0) {
+                    this.minute = 59;
+                    this.hour = this.hour ? this.hour - 1 : 23;
+                }
+            }
+        }
+        return this;
+    };
+    SMPTE.prototype.incrQF = function () {
+        this.backwards = false;
+        this.quarter = this.quarter + 1 & 7;
+        if (this.quarter == 0 || this.quarter == 4) this.incrFrame();
+        return this;
+    };
+    SMPTE.prototype.decrQF = function () {
+        this.backwards = true;
+        this.quarter = this.quarter + 7 & 7;
+        if (this.quarter == 3 || this.quarter == 7) this.decrFrame();
+        return this;
+    };
+    function _825(a) {
+        return [[24, 25, 29.97, 30][a[7] >> 1 & 3], (a[7] & 1) << 4 | a[6], a[5] << 4 | a[4], a[3] << 4 | a[2], a[1] << 4 | a[0]];
+    }
+    SMPTE.prototype.read = function (m) {
+        if (!(m instanceof MIDI)) m = MIDI.apply(null, arguments);
+        if (m[0] == 0xf0 && m[1] == 0x7f && m[3] == 1 && m[4] == 1 && m[9] == 0xf7) {
+            this.type = [24, 25, 29.97, 30][m[5] >> 5 & 3];
+            this.hour = m[5] & 31;
+            this.minute = m[6];
+            this.second = m[7];
+            this.frame = m[8];
+            this.quarter = 0;
+            this._ = undefined;
+            this._b = undefined;
+            this._f = undefined;
+            return true;
+        }
+        if (m[0] == 0xf1 && typeof m[1] != 'undefined') {
+            var q = m[1] >> 4;
+            var n = m[1] & 15;
+            if (q == 0) {
+                if (this._ == 7) {
+                    if (this._f == 7) {
+                        this.reset(_825(this._a));
+                        this.incrFrame();
+                    }
+                    this.incrFrame();
+                }
+            } else if (q == 3) {
+                if (this._ == 4) {
+                    this.decrFrame();
+                }
+            } else if (q == 4) {
+                if (this._ == 3) {
+                    this.incrFrame();
+                }
+            } else if (q == 7) {
+                if (this._ === 0) {
+                    if (this._b === 0) {
+                        this.reset(_825(this._a));
+                        this.decrFrame();
+                    }
+                    this.decrFrame();
+                }
+            }
+            if (!this._a) this._a = [];
+            this._a[q] = n;
+            this._f = this._f === q - 1 || q == 0 ? q : undefined;
+            this._b = this._b === q + 1 || q == 7 ? q : undefined;
+            this._ = q;
+            this.quarter = q;
+            return true;
+        }
+        return false;
+    };
+    function _mtc(t) {
+        if (!t.backwards && t.quarter >= 4) t.decrFrame(); // continue encoding previous frame
+        else if (t.backwards && t.quarter < 4) t.incrFrame();
+        var ret;
+        switch (t.quarter >> 1) {
+            case 0:
+                ret = t.frame;break;
+            case 1:
+                ret = t.second;break;
+            case 2:
+                ret = t.minute;break;
+            default:
+                ret = t.hour;
+        }
+        if (t.quarter & 1) ret >>= 4;else ret &= 15;
+        if (t.quarter == 7) {
+            if (t.type == 25) ret |= 2;else if (t.type == 29.97) ret |= 4;else if (t.type == 30) ret |= 6;
+        }
+        if (!t.backwards && t.quarter >= 4) t.incrFrame();else if (t.backwards && t.quarter < 4) t.decrFrame();
+        return ret | t.quarter << 4;
+    }
+    function _hrtype(t) {
+        if (t.type == 25) return t.hour | 0x20;
+        if (t.type == 29.97) return t.hour | 0x40;
+        if (t.type == 30) return t.hour | 0x60;
+        return t.hour;
+    }
+    function _dec(x) {
+        return x < 10 ? '0' + x : x;
+    }
+    SMPTE.prototype.toString = function () {
+        return [_dec(this.hour), _dec(this.minute), _dec(this.second), _dec(this.frame)].join(':');
+    };
+    JZZ.SMPTE = SMPTE;
+
+    // JZZ.MIDI
+
+    function MIDI(arg) {
+        var self = this instanceof MIDI ? this : self = new MIDI();
+        self._from = arg instanceof MIDI ? arg._from.slice() : [];
+        if (!arguments.length) return self;
+        var arr = arg instanceof Array ? arg : arguments;
+        for (var i = 0; i < arr.length; i++) {
+            var n = arr[i];
+            if (i == 1 && self[0] >= 0x80 && self[0] <= 0xAF) n = MIDI.noteValue(n);
+            if (n != parseInt(n) || n < 0 || n > 255) _throw(arr[i]);
+            self.push(n);
+        }
+        return self;
+    }
+    MIDI.prototype = [];
+    MIDI.prototype.constructor = MIDI;
+    var _noteNum = {};
+    MIDI.noteValue = function (x) {
+        return _noteNum[x.toString().toLowerCase()];
+    };
+
+    var _noteMap = { c: 0, d: 2, e: 4, f: 5, g: 7, a: 9, b: 11, h: 11 };
+    for (var k in _noteMap) {
+        if (!_noteMap.hasOwnProperty(k)) continue;
+        for (var n = 0; n < 12; n++) {
+            var m = _noteMap[k] + n * 12;
+            if (m > 127) break;
+            _noteNum[k + n] = m;
+            if (m > 0) {
+                _noteNum[k + 'b' + n] = m - 1;_noteNum[k + 'bb' + n] = m - 2;
+            }
+            if (m < 127) {
+                _noteNum[k + '#' + n] = m + 1;_noteNum[k + '##' + n] = m + 2;
+            }
+        }
+    }
+    for (var n = 0; n < 128; n++) {
+        _noteNum[n] = n;
+    }function _throw(x) {
+        throw RangeError('Bad MIDI value: ' + x);
+    }
+    function _ch(n) {
+        if (n != parseInt(n) || n < 0 || n > 0xf) _throw(n);return n;
+    }
+    function _7b(n) {
+        if (n != parseInt(n) || n < 0 || n > 0x7f) _throw(n);return n;
+    }
+    function _lsb(n) {
+        if (n != parseInt(n) || n < 0 || n > 0x3fff) _throw(n);return n & 0x7f;
+    }
+    function _msb(n) {
+        if (n != parseInt(n) || n < 0 || n > 0x3fff) _throw(n);return n >> 7;
+    }
+    var _helper = {
+        noteOff: function noteOff(c, n) {
+            return [0x80 + _ch(c), _7b(MIDI.noteValue(n)), 0];
+        },
+        noteOn: function noteOn(c, n, v) {
+            return [0x90 + _ch(c), _7b(MIDI.noteValue(n)), _7b(v)];
+        },
+        aftertouch: function aftertouch(c, n, v) {
+            return [0xA0 + _ch(c), _7b(MIDI.noteValue(n)), _7b(v)];
+        },
+        control: function control(c, n, v) {
+            return [0xB0 + _ch(c), _7b(n), _7b(v)];
+        },
+        program: function program(c, n) {
+            return [0xC0 + _ch(c), _7b(n)];
+        },
+        pressure: function pressure(c, n) {
+            return [0xD0 + _ch(c), _7b(n)];
+        },
+        pitchBend: function pitchBend(c, n) {
+            return [0xE0 + _ch(c), _lsb(n), _msb(n)];
+        },
+        bankMSB: function bankMSB(c, n) {
+            return [0xB0 + _ch(c), 0x00, _7b(n)];
+        },
+        bankLSB: function bankLSB(c, n) {
+            return [0xB0 + _ch(c), 0x20, _7b(n)];
+        },
+        modMSB: function modMSB(c, n) {
+            return [0xB0 + _ch(c), 0x01, _7b(n)];
+        },
+        modLSB: function modLSB(c, n) {
+            return [0xB0 + _ch(c), 0x21, _7b(n)];
+        },
+        breathMSB: function breathMSB(c, n) {
+            return [0xB0 + _ch(c), 0x02, _7b(n)];
+        },
+        breathLSB: function breathLSB(c, n) {
+            return [0xB0 + _ch(c), 0x22, _7b(n)];
+        },
+        footMSB: function footMSB(c, n) {
+            return [0xB0 + _ch(c), 0x04, _7b(n)];
+        },
+        footLSB: function footLSB(c, n) {
+            return [0xB0 + _ch(c), 0x24, _7b(n)];
+        },
+        portamentoMSB: function portamentoMSB(c, n) {
+            return [0xB0 + _ch(c), 0x05, _7b(n)];
+        },
+        portamentoLSB: function portamentoLSB(c, n) {
+            return [0xB0 + _ch(c), 0x25, _7b(n)];
+        },
+        volumeMSB: function volumeMSB(c, n) {
+            return [0xB0 + _ch(c), 0x07, _7b(n)];
+        },
+        volumeLSB: function volumeLSB(c, n) {
+            return [0xB0 + _ch(c), 0x27, _7b(n)];
+        },
+        balanceMSB: function balanceMSB(c, n) {
+            return [0xB0 + _ch(c), 0x08, _7b(n)];
+        },
+        balanceLSB: function balanceLSB(c, n) {
+            return [0xB0 + _ch(c), 0x28, _7b(n)];
+        },
+        panMSB: function panMSB(c, n) {
+            return [0xB0 + _ch(c), 0x0A, _7b(n)];
+        },
+        panLSB: function panLSB(c, n) {
+            return [0xB0 + _ch(c), 0x2A, _7b(n)];
+        },
+        expressionMSB: function expressionMSB(c, n) {
+            return [0xB0 + _ch(c), 0x0B, _7b(n)];
+        },
+        expressionLSB: function expressionLSB(c, n) {
+            return [0xB0 + _ch(c), 0x2B, _7b(n)];
+        },
+        damper: function damper(c, b) {
+            return [0xB0 + _ch(c), 0x40, b ? 127 : 0];
+        },
+        portamento: function portamento(c, b) {
+            return [0xB0 + _ch(c), 0x41, b ? 127 : 0];
+        },
+        sostenuto: function sostenuto(c, b) {
+            return [0xB0 + _ch(c), 0x42, b ? 127 : 0];
+        },
+        soft: function soft(c, b) {
+            return [0xB0 + _ch(c), 0x43, b ? 127 : 0];
+        },
+        allSoundOff: function allSoundOff(c) {
+            return [0xB0 + _ch(c), 0x78, 0];
+        },
+        allNotesOff: function allNotesOff(c) {
+            return [0xB0 + _ch(c), 0x7b, 0];
+        },
+        mtc: function mtc(t) {
+            return [0xF1, _mtc(t)];
+        },
+        songPosition: function songPosition(n) {
+            return [0xF2, _lsb(n), _msb(n)];
+        },
+        songSelect: function songSelect(n) {
+            return [0xF3, _7b(n)];
+        },
+        tune: function tune() {
+            return [0xF6];
+        },
+        clock: function clock() {
+            return [0xF8];
+        },
+        start: function start() {
+            return [0xFA];
+        },
+        continue: function _continue() {
+            return [0xFB];
+        },
+        stop: function stop() {
+            return [0xFC];
+        },
+        active: function active() {
+            return [0xFE];
+        },
+        sxIdRequest: function sxIdRequest() {
+            return [0xF0, 0x7E, 0x7F, 0x06, 0x01, 0xF7];
+        },
+        sxFullFrame: function sxFullFrame(t) {
+            return [0xF0, 0x7F, 0x7F, 0x01, 0x01, _hrtype(t), t.getMinute(), t.getSecond(), t.getFrame(), 0xF7];
+        },
+        reset: function reset() {
+            return [0xFF];
+        }
+    };
+    function _copyHelper(name, func) {
+        MIDI[name] = function () {
+            return new MIDI(func.apply(0, arguments));
+        };
+        _M.prototype[name] = function () {
+            this.send(func.apply(0, arguments));return this;
+        };
+    }
+    for (var k in _helper) {
+        if (_helper.hasOwnProperty(k)) _copyHelper(k, _helper[k]);
+    }var _channelMap = { a: 10, b: 11, c: 12, d: 13, e: 14, f: 15, A: 10, B: 11, C: 12, D: 13, E: 14, F: 15 };
+    for (var k = 0; k < 16; k++) {
+        _channelMap[k] = k;
+    }MIDI.prototype.getChannel = function () {
+        var c = this[0];
+        if (typeof c == 'undefined' || c < 0x80 || c > 0xef) return;
+        return c & 15;
+    };
+    MIDI.prototype.setChannel = function (x) {
+        var c = this[0];
+        if (typeof c == 'undefined' || c < 0x80 || c > 0xef) return this;
+        x = _channelMap[x];
+        if (typeof x != 'undefined') this[0] = c & 0xf0 | x;
+        return this;
+    };
+    MIDI.prototype.getNote = function () {
+        var c = this[0];
+        if (typeof c == 'undefined' || c < 0x80 || c > 0xaf) return;
+        return this[1];
+    };
+    MIDI.prototype.setNote = function (x) {
+        var c = this[0];
+        if (typeof c == 'undefined' || c < 0x80 || c > 0xaf) return this;
+        x = MIDI.noteValue(x);
+        if (typeof x != 'undefined') this[1] = x;
+        return this;
+    };
+    MIDI.prototype.getVelocity = function () {
+        var c = this[0];
+        if (typeof c == 'undefined' || c < 0x90 || c > 0x9f) return;
+        return this[2];
+    };
+    MIDI.prototype.setVelocity = function (x) {
+        var c = this[0];
+        if (typeof c == 'undefined' || c < 0x90 || c > 0x9f) return this;
+        x = parseInt(x);
+        if (x >= 0 && x < 128) this[2] = x;
+        return this;
+    };
+    MIDI.prototype.getSysExChannel = function () {
+        if (this[0] == 0xf0) return this[2];
+    };
+    MIDI.prototype.setSysExChannel = function (x) {
+        if (this[0] == 0xf0 && this.length > 2) {
+            x = parseInt(x);
+            if (x >= 0 && x < 128) this[2] = x;
+        }
+        return this;
+    };
+    MIDI.prototype.isNoteOn = function () {
+        var c = this[0];
+        if (typeof c == 'undefined' || c < 0x90 || c > 0x9f) return false;
+        return this[2] > 0 ? true : false;
+    };
+    MIDI.prototype.isNoteOff = function () {
+        var c = this[0];
+        if (typeof c == 'undefined' || c < 0x80 || c > 0x9f) return false;
+        if (c < 0x90) return true;
+        return this[2] == 0 ? true : false;
+    };
+    MIDI.prototype.isSysEx = function () {
+        return this[0] == 0xf0;
+    };
+    MIDI.prototype.isFullSysEx = function () {
+        return this[0] == 0xf0 && this[this.length - 1] == 0xf7;
+    };
+
+    function _hex(x) {
+        var a = [];
+        for (var i = 0; i < x.length; i++) {
+            a[i] = (x[i] < 16 ? '0' : '') + x[i].toString(16);
+        }
+        return a.join(' ');
+    }
+    MIDI.prototype.toString = function () {
+        if (!this.length) return 'empty';
+        var s = _hex(this);
+        if (this[0] < 0x80) return s;
+        var ss = {
+            241: 'MIDI Time Code',
+            242: 'Song Position',
+            243: 'Song Select',
+            244: 'Undefined',
+            245: 'Undefined',
+            246: 'Tune request',
+            248: 'Timing clock',
+            249: 'Undefined',
+            250: 'Start',
+            251: 'Continue',
+            252: 'Stop',
+            253: 'Undefined',
+            254: 'Active Sensing',
+            255: 'Reset'
+        }[this[0]];
+        if (ss) return s + ' -- ' + ss;
+        var c = this[0] >> 4;
+        ss = { 8: 'Note Off', 10: 'Aftertouch', 12: 'Program Change', 13: 'Channel Aftertouch', 14: 'Pitch Wheel' }[c];
+        if (ss) return s + ' -- ' + ss;
+        if (c == 9) return s + ' -- ' + (this[2] ? 'Note On' : 'Note Off');
+        if (c != 11) return s;
+        ss = {
+            0: 'Bank Select MSB',
+            1: 'Modulation Wheel MSB',
+            2: 'Breath Controller MSB',
+            4: 'Foot Controller MSB',
+            5: 'Portamento Time MSB',
+            6: 'Data Entry MSB',
+            7: 'Channel Volume MSB',
+            8: 'Balance MSB',
+            10: 'Pan MSB',
+            11: 'Expression Controller MSB',
+            12: 'Effect Control 1 MSB',
+            13: 'Effect Control 2 MSB',
+            16: 'General Purpose Controller 1 MSB',
+            17: 'General Purpose Controller 2 MSB',
+            18: 'General Purpose Controller 3 MSB',
+            19: 'General Purpose Controller 4 MSB',
+            32: 'Bank Select LSB',
+            33: 'Modulation Wheel LSB',
+            34: 'Breath Controller LSB',
+            36: 'Foot Controller LSB',
+            37: 'Portamento Time LSB',
+            38: 'Data Entry LSB',
+            39: 'Channel Volume LSB',
+            40: 'Balance LSB',
+            42: 'Pan LSB',
+            43: 'Expression Controller LSB',
+            44: 'Effect control 1 LSB',
+            45: 'Effect control 2 LSB',
+            48: 'General Purpose Controller 1 LSB',
+            49: 'General Purpose Controller 2 LSB',
+            50: 'General Purpose Controller 3 LSB',
+            51: 'General Purpose Controller 4 LSB',
+            64: 'Damper Pedal On/Off',
+            65: 'Portamento On/Off',
+            66: 'Sostenuto On/Off',
+            67: 'Soft Pedal On/Off',
+            68: 'Legato Footswitch',
+            69: 'Hold 2',
+            70: 'Sound Controller 1',
+            71: 'Sound Controller 2',
+            72: 'Sound Controller 3',
+            73: 'Sound Controller 4',
+            74: 'Sound Controller 5',
+            75: 'Sound Controller 6',
+            76: 'Sound Controller 7',
+            77: 'Sound Controller 8',
+            78: 'Sound Controller 9',
+            79: 'Sound Controller 10',
+            80: 'General Purpose Controller 5',
+            81: 'General Purpose Controller 6',
+            82: 'General Purpose Controller 7',
+            83: 'General Purpose Controller 8',
+            84: 'Portamento Control',
+            88: 'High Resolution Velocity Prefix',
+            91: 'Effects 1 Depth',
+            92: 'Effects 2 Depth',
+            93: 'Effects 3 Depth',
+            94: 'Effects 4 Depth',
+            95: 'Effects 5 Depth',
+            96: 'Data Increment',
+            97: 'Data Decrement',
+            98: 'Non-Registered Parameter Number LSB',
+            99: 'Non-Registered Parameter Number MSB',
+            100: 'Registered Parameter Number LSB',
+            101: 'Registered Parameter Number MSB',
+            120: 'All Sound Off',
+            121: 'Reset All Controllers',
+            122: 'Local Control On/Off',
+            123: 'All Notes Off',
+            124: 'Omni Mode Off',
+            125: 'Omni Mode On',
+            126: 'Mono Mode On',
+            127: 'Poly Mode On'
+        }[this[1]];
+        if (!ss) ss = 'Undefined';
+        return s + ' -- ' + ss;
+    };
+    MIDI.prototype._stamp = function (obj) {
+        this._from.push(obj._orig ? obj._orig : obj);return this;
+    };
+    MIDI.prototype._unstamp = function (obj) {
+        if (typeof obj == 'undefined') this._from = [];else {
+            if (obj._orig) obj = obj._orig;
+            var i = this._from.indexOf(obj);
+            if (i > -1) this._from.splice(i, 1);
+        }
+        return this;
+    };
+    MIDI.prototype._stamped = function (obj) {
+        if (obj._orig) obj = obj._orig;
+        for (var i = 0; i < this._from.length; i++) {
+            if (this._from[i] == obj) return true;
+        }return false;
+    };
+
+    JZZ.MIDI = MIDI;
+
+    JZZ.lib = {};
+    JZZ.lib.openMidiOut = function (name, engine) {
+        var port = new _M();
+        engine._openOut(port, name);
+        return port;
+    };
+    JZZ.lib.openMidiIn = function (name, engine) {
+        var port = new _M();
+        engine._openIn(port, name);
+        return port;
+    };
+    JZZ.lib.registerMidiOut = function (name, engine) {
+        var x = engine._info(name);
+        for (var i = 0; i < _virtual._outs.length; i++) {
+            if (_virtual._outs[i].name == x.name) return false;
+        }x.engine = engine;
+        _virtual._outs.push(x);
+        if (_jzz && _jzz._bad) {
+            _jzz._repair();_jzz._resume();
+        }
+        return true;
+    };
+    JZZ.lib.registerMidiIn = function (name, engine) {
+        var x = engine._info(name);
+        for (var i = 0; i < _virtual._ins.length; i++) {
+            if (_virtual._ins[i].name == x.name) return false;
+        }x.engine = engine;
+        _virtual._ins.push(x);
+        if (_jzz && _jzz._bad) {
+            _jzz._repair();_jzz._resume();
+        }
+        return true;
+    };
+    var _ac;
+    JZZ.lib.getAudioContext = function () {
+        return _ac;
+    };
+    if (typeof window !== "undefined") {
+        var AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) _ac = new AudioContext();
+        if (_ac && !_ac.createGain) _ac.createGain = _ac.createGainNode;
+        function _activateAudioContext() {
+            if (_ac.state != 'running') {
+                _ac.resume();
+                var osc = _ac.createOscillator();
+                var gain = _ac.createGain();
+                gain.gain.setTargetAtTime(0, _ac.currentTime, 0.01);
+                osc.connect(gain);
+                gain.connect(_ac.destination);
+                if (!osc.start) osc.start = osc.noteOn;
+                if (!osc.stop) osc.stop = osc.noteOff;
+                osc.start(.1);osc.stop(0.11);
+            } else {
+                document.removeEventListener('touchend', _activateAudioContext);
+                document.removeEventListener('mousedown', _activateAudioContext);
+                document.removeEventListener('keydown', _activateAudioContext);
+            }
+        }
+        document.addEventListener('touchend', _activateAudioContext);
+        document.addEventListener('mousedown', _activateAudioContext);
+        document.addEventListener('keydown', _activateAudioContext);
+        _activateAudioContext();
+    }
+
+    JZZ.util = {};
+    JZZ.util.iosSound = function () {
+        // deprecated. will be removed in next version
     };
     return JZZ;
 }
