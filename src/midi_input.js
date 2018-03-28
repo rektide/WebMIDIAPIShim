@@ -220,13 +220,13 @@ midiProc = function(timestamp, data){
       evt.data = new Uint8Array(data.slice(i, length + i));
     }
 
-    if(nodejs){
-      if(this._onmidimessage){
-        this._onmidimessage(evt);
-      }
-    }else{
+    //if(nodejs){
+    //  if(this._onmidimessage){
+    //    this._onmidimessage(evt);
+    //  }
+    //}else{
       let e = new MIDIMessageEvent(this, evt.data, evt.receivedTime);
       this.dispatchEvent(e);
-    }
+    //}
   }
 };
