@@ -51,7 +51,7 @@ var MIDIOutput = function () {
             if (this.connection === 'open') {
                 return;
             }
-            this.port = (0, _jzz2.default)().openMidiOut(this.name).or('Could not open input ' + this.name).and(function () {
+            this.port = (0, _jzz2.default)().openMidiOut(this.name).or('Could not open output ' + this.name).and(function () {
                 _this.connection = 'open';
                 (0, _midi_access.dispatchEvent)(_this); // dispatch MIDIConnectionEvent via MIDIAccess
             });
