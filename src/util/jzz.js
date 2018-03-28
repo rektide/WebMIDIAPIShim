@@ -393,7 +393,7 @@ function createJzz() {
         this._pause();
         document.addEventListener('jazz-midi-msg', eventHandle);
         try { document.dispatchEvent(new Event('jazz-midi')); } catch (e) { }
-        window.setTimeout(function () { if (!inst) self._crash(); }, 0);
+        setTimeout(function () { if (!inst) self._crash(); }, 0);
     }
 
     function _zeroBreak() {
@@ -1411,7 +1411,7 @@ function createJzz() {
     }
     var _ac;
     JZZ.lib.getAudioContext = function () { return _ac; }
-    if (window) {
+    if (typeof window !== "undefined") {
         var AudioContext = window.AudioContext || window.webkitAudioContext;
         if (AudioContext) _ac = new AudioContext();
         if (_ac && !_ac.createGain) _ac.createGain = _ac.createGainNode;
