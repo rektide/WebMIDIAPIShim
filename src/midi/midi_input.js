@@ -31,14 +31,9 @@ export default class MIDIInput {
             set(value) {
                 this._onmidimessage = value;
                 if (typeof value === 'function') {
-                    // if (this.port === null) {
-                    //     this.open();
-                    // }
-                    Jzz().midiInOpen(this.name).connect((msg) => {
-                        this._midiProc(0, msg);
-                        // const m = new MIDIMessageEvent(this, msg);
-                        // value(m);
-                    });
+                    if (this.port === null) {
+                        this.open();
+                    }
                 }
             }
         });
@@ -97,6 +92,9 @@ export default class MIDIInput {
                 this.connection = 'open';
                 dispatchEvent(this); // dispatch MIDIConnectionEvent via MIDIAccess
             })
+            .connect( msg=> {
+                this._midiProc(0, msg);
+            })
             .err((err) => { console.log(err); })
     }
 
@@ -149,7 +147,7 @@ function midiProc(timestamp, data) {
     let i;
     let isSysexMessage = false;
 
-    console.log(timestamp, data);
+    //console.log(timestamp, data);
 
     // Jazz sometimes passes us multiple messages at once, so we need to parse them out and pass them one at a time.
 
