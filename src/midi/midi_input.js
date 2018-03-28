@@ -8,8 +8,6 @@ import { dispatchEvent } from './midi_access';
 import { generateUUID, getDevice } from '../util/util';
 import Store from '../util/store';
 
-const nodejs = getDevice().nodejs
-
 export default class MIDIInput {
     constructor(info) {
         this.id = info.id || generateUUID();
@@ -227,13 +225,7 @@ function midiProc(timestamp, data) {
             evt.data = new Uint8Array(data.slice(i, length + i));
         }
 
-        if (nodejs) {
-            if (this._onmidimessage) {
-                this._onmidimessage(evt);
-            }
-        } else {
-            const e = new MIDIMessageEvent(this, evt.data, evt.receivedTime);
-            this.dispatchEvent(e);
-        }
+        const e = new MIDIMessageEvent(this, evt.data, evt.receivedTime);
+        this.dispatchEvent(e);
     }
 }
