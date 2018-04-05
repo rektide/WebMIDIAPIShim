@@ -2607,21 +2607,26 @@ var Store = function () {
         _classCallCheck(this, Store);
 
         this.store = {};
-        this.keys = [];
+        this._keys = [];
     }
 
     _createClass(Store, [{
+        key: "keys",
+        value: function keys() {
+            return this._keys[Symbol.iterator]();
+        }
+    }, {
         key: "add",
         value: function add(obj) {
             var id = "" + new Date().getTime() + idIndex;
             idIndex += 1;
-            this.keys.push(id);
+            this._keys.push(id);
             this.store[id] = obj;
         }
     }, {
         key: "set",
         value: function set(id, obj) {
-            this.keys.push(id);
+            this._keys.push(id);
             this.store[id] = obj;
             return this;
         }
@@ -2633,15 +2638,15 @@ var Store = function () {
     }, {
         key: "has",
         value: function has(id) {
-            return this.keys.indexOf(id) !== -1;
+            return this._keys.indexOf(id) !== -1;
         }
     }, {
         key: "delete",
         value: function _delete(id) {
             delete this.store[id];
-            var index = this.keys.indexOf(id);
+            var index = this._keys.indexOf(id);
             if (index > -1) {
-                this.keys.splice(index, 1);
+                this._keys.splice(index, 1);
             }
             return this;
         }
@@ -2649,9 +2654,9 @@ var Store = function () {
         key: "values",
         value: function values() {
             var elements = [];
-            var l = this.keys.length;
+            var l = this._keys.length;
             for (var i = 0; i < l; i += 1) {
-                var element = this.store[this.keys[i]];
+                var element = this.store[this._keys[i]];
                 elements.push(element);
             }
             return elements;
@@ -2659,16 +2664,16 @@ var Store = function () {
     }, {
         key: "forEach",
         value: function forEach(cb) {
-            var l = this.keys.length;
+            var l = this._keys.length;
             for (var i = 0; i < l; i += 1) {
-                var element = this.store[this.keys[i]];
+                var element = this.store[this._keys[i]];
                 cb(element);
             }
         }
     }, {
         key: "clear",
         value: function clear() {
-            this.keys = [];
+            this._keys = [];
             this.store = {};
         }
     }]);
